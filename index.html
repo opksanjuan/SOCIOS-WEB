@@ -35,6 +35,7 @@ const cfg={apiKey:"AIzaSyAvL4C3aSXdWGXgOKNzuc1AsayAJNlVcDg",authDomain:"opk-park
 const app=initializeApp(cfg),db=getFirestore(app),auth=getAuth(app);
 const ADMINS=['qjD9qaK3NHht0VlXkAUNxC9px7x2','fhdBtRT5VYcIihuajfzRHKBvm6z1','55OTCkJjkoSdi2Faq6qIaBol2AX2'];
 const PLANES=[{id:'individual',n:'Clase individual'},{id:'1x',n:'1 vez por semana'},{id:'2x',n:'2 veces por semana'},{id:'3x',n:'3 veces por semana'},{id:'hermanos2x',n:'Hermanos · 2 veces por semana',h:1},{id:'hermanos3x',n:'Hermanos · 3 veces por semana',h:1}];
+const PERMITIR_ELEGIR_PLAN=true; // true = el socio elige plan / otro monto · false = solo informativo y se cobra el plan asignado en administración
 let PRECIOS={individual:10000,'1x':31000,'2x':41000,'3x':51000,hermanos2x:35000,hermanos3x:45000}; // solo informativo
 fetch('https://opk-pagos.opk-sanjuan.workers.dev/plans').then(r=>r.json()).then(d=>{PRECIOS={...PRECIOS,...(d.prices||{})};try{if(S.tab=='mens'&&S.hijos)draw()}catch(e){}}).catch(()=>{});
 const DOM='@socios.opk.app',DIAS={'L M V':[1,3,5],'M J':[2,4],'SABADOS':[6]};
@@ -129,13 +130,15 @@ function draw(){
  ui(head(out)+(S.hijos.length>1?`<div class="r">${S.hijos.map(h=>`<button class="${h.cod==S.sel?'p':''}" onclick="pick(${h.cod})">${esc(h.nombre.split(' ')[0])}</button>`).join('')}</div>`:'')
  +`<div class="r">${Object.keys(T).map(k=>`<button class="${k==S.tab?'on':''}" onclick="tab('${k}')">${T[k]}</button>`).join('')}</div>`+VIEW[S.tab](a))}
 
+window.setPlan=v=>{S.planSel=v};
+window.setLibre=v=>{S.libreMonto=v;S.planSel='libre'};
 window.pagarCuota=async function(disc){
  try{
   const a=S.hijos.find(h=>h.cod==S.sel);
   if(!a)throw new Error('No se encontró el alumno.');
   if(a.activo===false)throw new Error('El alumno está dado de baja.');
-  const plan=S.planSel||a.plan;
-  if(!plan)throw new Error('Elegí un plan de pago.');
+  const plan=PERMITIR_ELEGIR_PLAN?(S.planSel||a.plan):a.plan;
+  if(!plan)throw new Error(PERMITIR_ELEGIR_PLAN?'Elegí un plan de pago.':'La escuela todavía no asignó tu plan de pago. Avisá a la administración.');
   let monto=0;
   if(plan==='libre'){monto=Math.round(Number(S.libreMonto));if(!(monto>0))throw new Error('Escribí el monto que vas a abonar.')}
   const token=await getIdToken(S.u,true);
@@ -147,7 +150,7 @@ window.pagarCuota=async function(disc){
   if(!resp.ok)throw new Error(data.error||'No se pudo iniciar el pago.');
   if(!data.init_point)throw new Error('Mercado Pago no devolvió el enlace de pago.');
   location.href=data.init_point;
- }catch(e){alert(e.message||'No se pudo iniciar el pago.')}
+ }catch(e){console.error('Pago OPK:',e);alert(e instanceof TypeError?'No se pudo conectar con el servidor de pagos. Avisá a la administración (el Worker no responde).':(e.message||'No se pudo iniciar el pago.'))}
 };
 
 const VIEW={
@@ -156,7 +159,7 @@ mens:a=>{const cur=hoy.slice(0,7),p=S.pend.filter(x=>x.mes==cur&&x.concepto!='in
  const pagada=p.some(x=>x.estado=='acreditado'),revision=p.some(x=>x.estado!='acreditado'&&x.estado!='rechazado');
  const st=pagada?'<span class="ok">✔ Cuota de '+mt(cur)+' pagada</span>':revision?'<span class="mu">⏳ Cuota de '+mt(cur)+' en revisión</span>':dia>=12?'<span class="bad">Cuota de '+mt(cur)+' vencida (vencía el día 11): corresponde 10% de recargo.</span>':'<span class="bad">Cuota de '+mt(cur)+' pendiente</span> <span class="mu">· vence el día 11; desde el día 12 tiene 10% de recargo</span>';
  const disciplinas=Array.isArray(a.disc)?a.disc.filter(Boolean):[],disc=disciplinas[0]||'';
- const boton=!pagada&&!revision?(a.activo===false?'<p class="mu">Alumno inactivo: no se puede pagar.</p>':!disc?'<p class="bad">Tu disciplina todavía no está asignada. Comunicate con la escuela.</p>':`<div class="card" style="margin-top:12px"><b>Abonar cuota mensual</b><b style="display:block;margin-top:8px">Planes y valores</b><div class="w"><table><tr><th>Plan</th><th>Valor mensual</th></tr>${PLANES.filter(x=>!x.h||S.hijos.length>1).map(x=>`<tr><td>${x.n}</td><td>${PRECIOS[x.id]?$$(PRECIOS[x.id]):'—'}</td></tr>`).join('')}</table></div><p class="mu">Elegí el plan que corresponde a la inscripción. Vence el día 11; desde el día 12 se suma un recargo del 10%. Si acordaste con la escuela un monto distinto, elegí “Otro monto acordado” y escribí el importe.</p>${PLANES.filter(x=>!x.h||S.hijos.length>1).map(x=>`<label style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="radio" name="plan" value="${x.id}" ${(S.planSel||a.plan)==x.id?'checked':''} onchange="S.planSel=this.value"><span><b>${x.n}</b> <span class="mu">${PRECIOS[x.id]?'· '+$$(PRECIOS[x.id]):''}</span></span></label>`).join('')}<label style="display:flex;gap:8px;align-items:center;margin:6px 0;flex-wrap:wrap"><input type="radio" name="plan" id="plibre" value="libre" ${S.planSel==='libre'?'checked':''} onchange="S.planSel='libre'"><span><b>Otro monto acordado</b></span><input type="number" min="1" inputmode="numeric" placeholder="Monto en $" value="${esc(S.libreMonto||'')}" oninput="S.libreMonto=this.value" onfocus="document.getElementById('plibre').checked=true;S.planSel='libre'" style="width:150px"></label><p class="mu" style="margin:4px 0 10px">Los pagos con otro monto quedan en revisión hasta que la escuela los confirme.</p><button class="p" style="width:100%;font-weight:800" onclick="pagarCuota('${esc(disc)}')">💳 PAGAR CUOTA CON MERCADO PAGO</button></div>`):'';
+ const boton=!pagada&&!revision?(a.activo===false?'<p class="mu">Alumno inactivo: no se puede pagar.</p>':!disc?'<p class="bad">Tu disciplina todavía no está asignada. Comunicate con la escuela.</p>':`<div class="card" style="margin-top:12px"><b>Abonar cuota mensual</b><b style="display:block;margin-top:8px">Planes y valores</b><div class="w"><table><tr><th>Plan</th><th>Valor mensual</th></tr>${PLANES.filter(x=>!x.h||S.hijos.length>1).map(x=>`<tr><td>${x.n}</td><td>${PRECIOS[x.id]?$$(PRECIOS[x.id]):'—'}</td></tr>`).join('')}</table></div><p class="mu">Vence el día 11; desde el día 12 se suma un recargo del 10%.</p>${PERMITIR_ELEGIR_PLAN?`<p class="mu">Elegí el plan que corresponde a la inscripción. Si acordaste con la escuela un monto distinto, elegí “Otro monto acordado” y escribí el importe.</p>${PLANES.filter(x=>!x.h||S.hijos.length>1).map(x=>`<label style="display:flex;gap:10px;align-items:center;margin:8px 0;font-size:14px;color:var(--tx)"><input type="radio" name="plan" value="${x.id}" ${(S.planSel||a.plan)==x.id?'checked':''} onchange="setPlan(this.value)" style="width:18px;height:18px;padding:0;margin:0;flex:none;accent-color:#2388ff;box-shadow:none"><span><b>${x.n}</b>${PRECIOS[x.id]?` · ${$$(PRECIOS[x.id])}`:''}</span></label>`).join('')}<label style="display:flex;gap:10px;align-items:center;margin:8px 0;font-size:14px;color:var(--tx);flex-wrap:wrap"><input type="radio" name="plan" id="plibre" value="libre" ${S.planSel==='libre'?'checked':''} onchange="setPlan('libre')" style="width:18px;height:18px;padding:0;margin:0;flex:none;accent-color:#2388ff;box-shadow:none"><span><b>Otro monto acordado</b></span><input type="number" min="1" inputmode="numeric" placeholder="Monto en $" value="${esc(S.libreMonto||'')}" oninput="setLibre(this.value)" onfocus="document.getElementById('plibre').checked=true;setPlan('libre')" style="width:150px"></label><p class="mu" style="margin:4px 0 12px">Los pagos con otro monto quedan en revisión hasta que la escuela los confirme.</p>`:`<p class="mu" style="margin:4px 0 12px">Se cobra el valor del plan asignado a tu inscripción.</p>`}<button class="p" style="width:100%;font-weight:800" onclick="pagarCuota('${esc(disc)}')">💳 PAGAR CUOTA CON MERCADO PAGO</button></div>`):'';
  const r=[...S.pend].sort((x,y)=>(y.mes+y.fecha).localeCompare(x.mes+x.fecha));
  return card(`<h2>Mensualidades</h2><p>${st}</p>${boton}<div class="w"><table><tr><th>Mes</th><th>Disciplina</th><th>Monto</th><th>Método</th><th>Fecha</th><th>Estado</th><th></th></tr>${r.map(x=>`<tr><td>${mt(x.mes)}</td><td>${esc(x.disc||'')}</td><td>${$$(x.monto)}${x.rec>0?' <span class="bad">(+10%)</span>':''}</td><td>${esc(x.met||'')}</td><td>${fd(x.fecha)}</td><td class="${x.estado=='acreditado'?'ok':'mu'}">${x.estado=='acreditado'?'Pagado':'En revisión'}</td><td>${x.estado=='acreditado'?`<button title="Descargar recibo" onclick="recibo('${x.id}')">🧾</button>`:''}</td></tr>`).join('')||'<tr><td colspan="7" class="mu">Sin pagos registrados.</td></tr>'}</table></div>`)},
 cal:a=>{const[y,m]=S.mes.split('-').map(Number),n=new Date(y,m,0).getDate(),off=(new Date(y,m-1,1,12).getDay()+6)%7,dias=DIAS[a.dia]||[];let c='';for(let i=0;i<off;i++)c+='<span></span>';
